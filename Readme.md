@@ -33,7 +33,7 @@ A Streamlit-based web application for automated detection and quantification of 
 
 1. **Clone the repository:**
     ```sh
-    git clone https://github.com/yourusername/nitrate_detection.git
+    git clone https://github.com/Dnadithya/nitrate_detection.git
     cd nitrate_detection
     ```
 
@@ -43,7 +43,7 @@ A Streamlit-based web application for automated detection and quantification of 
     ```
 
 3. **Download YOLOv8 weights:**
-    - Place your YOLOv8 weights file (e.g., `yolov8n.pt` or custom `best.pt`) in the `weights/` directory.
+    - Place your YOLOv8 weights file (e.g., `best.pt`) in the `weights/` directory.
     - If not present, the default YOLOv8n weights will be used.
 
 ---
