@@ -78,6 +78,9 @@ A Streamlit-based web application for automated detection and quantification of 
 | >2.0           | High                  | Immediate attention required  |
 
 ---
+## Expected Result
+
+![This is the expected output after analysis](image.png)
 
 ## 🛠️ Technical Details
 
