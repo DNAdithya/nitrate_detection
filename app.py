@@ -217,6 +217,7 @@ def main():
     else:
         about_page()
 
+
 def upload_page(analyzer):
     """Main upload and testing page"""
     st.markdown('<h2>📤 Upload Image for Testing</h2>', unsafe_allow_html=True)
@@ -236,7 +237,7 @@ def upload_page(analyzer):
             # Display uploaded image
             try:
                 image = Image.open(uploaded_image)
-                st.image(image, caption=f'Uploaded Image: {uploaded_image.name}', use_column_width=True)
+                st.image(image, caption=f'Uploaded Image: {uploaded_image.name}',width=400)
                 
                 # Image information
                 st.markdown("**Image Details:**")
@@ -274,18 +275,17 @@ def upload_page(analyzer):
                 with st.spinner("Analyzing image..."):
                     # Load image
                     image = Image.open(uploaded_image)
-                    
-                    # Analyze image using the nitrite analyzer
-                    results, processed_image = analyzer.analyze_image(image)
-                    
                     # Get object detections
                     boxes, scores, detected_classes = analyzer.detect_objects(image)
                     
+
                     # Draw detected boxes on the image
                     if show_detections and boxes:
                         analyzed_image = analyzer.draw_detected_boxes(image, boxes, scores, detected_classes)
                         st.markdown("### 🎯 Object Detection Results")
-                        st.image(analyzed_image, caption="Image with Detections", use_column_width=True)
+                        st.image(analyzed_image, caption="Image with Detections", width=400 )
+                        # Analyze image using the nitrite analyzer
+                        results, processed_image = analyzer.analyze_image(image,boxes, scores, detected_classes)
                     
                     # Display analysis results
                     st.markdown("### 📊 Analysis Results")
