@@ -142,30 +142,243 @@ class NitriteTestAnalyzer:
         
         return annotated_image
     
-    def extract_liquid_region(self, test_tube_region, liquid_ratio=0.30):
+    def extract_test_tube_contour(self,image):
         """
-        Extract only the liquid region from test tube (bottom portion)
+        Extract the test tube contour from the image to get precise boundaries
+        Focus on detecting circular/cylindrical test tube shape
         
         Args:
-            test_tube_region: Test tube image region
-            liquid_ratio: Ratio of bottom region to consider (0.6 = bottom 60%)
-            
+            image: Input image (NumPy array)
+        
         Returns:
-            liquid_region: Cropped liquid region
+            contour: Best contour representing the test tube
+            mask: Binary mask of the test tube region
+        """
+        # Convert to grayscale if needed
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # Use adaptive thresholding to better separate test tube from background
+        thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        
+        # Apply morphological operations to clean up
+        kernel = np.ones((3, 3), np.uint8)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return None, None
+        
+        # Filter contours based on test tube characteristics
+        valid_contours = []
+        
+        for contour in contours:
+            # Calculate contour properties
+            area = cv2.contourArea(contour)
+            perimeter = cv2.arcLength(contour, True)
+            
+            # Skip very small contours
+            if area < 500:
+                continue
+                
+            # Calculate aspect ratio
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = h / w if w > 0 else 0
+            
+            # Test tubes are typically taller than they are wide
+            if aspect_ratio > 1.5:  # Height should be at least 1.5x width
+                # Calculate circularity/roundness
+                if perimeter > 0:
+                    circularity = 4 * np.pi * area / (perimeter * perimeter)
+                    # Test tube should have reasonable circularity (not too elongated)
+                    if circularity > 0.3:  # Adjust threshold as needed
+                        valid_contours.append((contour, area, aspect_ratio, circularity))
+        
+        if not valid_contours:
+            # Fallback: use largest contour
+            largest_contour = max(contours, key=cv2.contourArea)
+            mask = np.zeros(gray.shape, dtype=np.uint8)
+            cv2.fillPoly(mask, [largest_contour], 255)
+            return largest_contour, mask
+        
+        # Select the best contour based on combined criteria
+        # Priority: larger area + good aspect ratio + good circularity
+        best_contour = max(valid_contours, key=lambda x: x[1] * x[2] * x[3])
+        
+        # Create a mask from the contour
+        mask = np.zeros(gray.shape, dtype=np.uint8)
+        cv2.fillPoly(mask, [best_contour[0]], 255)
+        
+        return best_contour[0], mask
+
+    def extract_test_tube_contour_alternative(self,image):
+        """
+        Alternative method using color-based segmentation for test tube detection
+        This works better when test tube has distinct liquid color
+        
+        Args:
+            image: Input image (NumPy array)
+        
+        Returns:
+            contour: Best contour representing the test tube
+            mask: Binary mask of the test tube region
+        """
+        # Convert to HSV for better color segmentation
+        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        
+        # Create mask for non-background colors (assuming background is white/light)
+        # Adjust these values based on your specific images
+        lower_bound = np.array([0, 30, 30])    # Lower HSV threshold
+        upper_bound = np.array([180, 255, 255])  # Upper HSV threshold
+        
+        # Create mask for colored regions (liquid)
+        mask = cv2.inRange(hsv, lower_bound, upper_bound)
+        
+        # Apply morphological operations
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return None, None
+        
+        # Filter and select best contour
+        valid_contours = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > 100:  # Minimum area threshold
+                x, y, w, h = cv2.boundingRect(contour)
+                aspect_ratio = h / w if w > 0 else 0
+                if aspect_ratio > 1.0:  # Should be taller than wide
+                    valid_contours.append((contour, area))
+        
+        if not valid_contours:
+            return None, None
+        
+        # Select largest valid contour
+        best_contour = max(valid_contours, key=lambda x: x[1])
+        
+        # Create final mask
+        final_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(final_mask, [best_contour[0]], 255)
+        
+        return best_contour[0], final_mask
+
+ 
+
+    def extract_liquid_region(self,test_tube_region, liquid_ratio=0.50, width_ratio=0.50, method='color'):
+        """
+        Extract only the liquid region from the test tube (bottom and narrow center portion)
+        
+        Args:
+            test_tube_region: Test tube image region (as NumPy array or PIL image)
+            liquid_ratio: Ratio of bottom region to consider (e.g., 0.3 = bottom 30%)
+            width_ratio: Ratio of central width to keep (e.g., 0.5 = center 50% of width)
+            method: Method to use - 'contour', 'color', 'circle', or 'simple'
+        
+        Returns:
+            liquid_region: Cropped liquid region (bottom + center)
+
+            test_tube_mask: Binary mask of the test tube (if method != 'simple')
         """
         if isinstance(test_tube_region, Image.Image):
             test_tube_region = np.array(test_tube_region)
         
+        original_image = test_tube_region.copy()
         height, width = test_tube_region.shape[:2]
         
-        # Calculate the starting point for liquid region (from bottom)
-        liquid_start = int(height * (1 - liquid_ratio))
+        mask = None
         
-        # Extract bottom portion where liquid is present
-        liquid_region = test_tube_region[liquid_start:, :]
-        
-        return liquid_region
+        if method == 'contour':
+            # Use improved contour detection
+            contour, mask = self.extract_test_tube_contour(test_tube_region)
+            
+        elif method == 'color':
+            # Use color-based segmentation
+            contour, mask = self.extract_test_tube_contour_alternative(test_tube_region)
+            
 
+            
+        elif method == 'simple':
+            # Use original simple method
+            liquid_start = int(height * (1 - liquid_ratio))
+            side_crop = int((1 - width_ratio) / 2 * width)
+            left = side_crop
+            right = width - side_crop
+            
+            liquid_region = test_tube_region[liquid_start:, left:right]
+            return liquid_region, None
+        
+        # Process with mask if available
+        if mask is not None:
+            # Apply mask to remove background
+            test_tube_masked = cv2.bitwise_and(test_tube_region, test_tube_region, mask=mask)
+            
+            # Find bounding box of the mask
+            coords = np.column_stack(np.where(mask > 0))
+            if len(coords) > 0:
+                y_min, x_min = coords.min(axis=0)
+                y_max, x_max = coords.max(axis=0)
+                
+                # Crop to bounding box
+                test_tube_cropped = test_tube_masked[y_min:y_max, x_min:x_max]
+                mask_cropped = mask[y_min:y_max, x_min:x_max]
+                
+                # Update dimensions
+                height, width = test_tube_cropped.shape[:2]
+                
+                # Extract liquid region
+                liquid_start = int(height * (1 - liquid_ratio))
+                
+                # Find actual tube boundaries at liquid level
+                if liquid_start < height:
+                    liquid_level_slice = mask_cropped[liquid_start:min(liquid_start+5, height)]
+                    
+                    if liquid_level_slice.size > 0:
+                        # Find the horizontal extent of the tube at liquid level
+                        row_sums = np.sum(liquid_level_slice, axis=0)
+                        non_zero_cols = np.where(row_sums > 0)[0]
+                        
+                        if len(non_zero_cols) > 0:
+                            tube_left = non_zero_cols[0]
+                            tube_right = non_zero_cols[-1]
+                            
+                            # Apply width ratio to actual tube width
+                            tube_width = tube_right - tube_left
+                            center_crop = int(tube_width * (1 - width_ratio) / 2)
+                            left = max(0, tube_left + center_crop)
+                            right = min(width, tube_right - center_crop)
+                        else:
+                            # Fallback
+                            side_crop = int((1 - width_ratio) / 2 * width)
+                            left = side_crop
+                            right = width - side_crop
+                    else:
+                        # Fallback
+                        side_crop = int((1 - width_ratio) / 2 * width)
+                        left = side_crop
+                        right = width - side_crop
+                else:
+                    # Fallback
+                    side_crop = int((1 - width_ratio) / 2 * width)
+                    left = side_crop
+                    right = width - side_crop
+                
+                # Extract final liquid region
+                liquid_region = test_tube_cropped[liquid_start:, left:right]
+                
+                return liquid_region
     def extract_dominant_color_advanced(self, image_region, method='kmeans', k=5):
         """
         Advanced dominant color extraction with multiple methods
@@ -223,6 +436,7 @@ class NitriteTestAnalyzer:
         Returns:
             final_pixels (ndarray): Filtered pixels array (N x 3)
         """
+        """
         if pixels.ndim == 3:
             h, w, _ = pixels.shape
             trim_px = int(w * trim_ratio)
@@ -231,7 +445,7 @@ class NitriteTestAnalyzer:
             pixels = pixels[:, trim_px: w - trim_px, :]
 
             # Flatten to list of RGB pixels
-            pixels = pixels.reshape(-1, 3)
+            pixels = pixels.reshape(-1, 3)"""
 
         if len(pixels) == 0:
             return pixels
@@ -491,7 +705,7 @@ class NitriteTestAnalyzer:
         
         return best_match, confidence, similarities
     
-    def detect_test_tube_region(self, image, boxes, scores, detected_classes, confidence_threshold=0.5, test_tube_class_id=0):
+    def detect_test_tube_region(image, boxes, scores, detected_classes, confidence_threshold=0.5, test_tube_class_id=0):
         """
         Detect test tube region using YOLO detection results
         
@@ -542,27 +756,30 @@ class NitriteTestAnalyzer:
         # Handle different box formats
         if len(best_box) == 4:
             # Handle both [x, y, w, h] and [x1, y1, x2, y2] formats
-            if best_box[2] > image_array.shape[1] or best_box[3] > image_array.shape[0]:
+            if best_box[2] > best_box[0] and best_box[3] > best_box[1]:
                 # Likely [x1, y1, x2, y2] format
                 x1, y1, x2, y2 = best_box
                 x, y, w, h = int(x1), int(y1), int(x2 - x1), int(y2 - y1)
             else:
                 # Likely [x, y, w, h] format
                 x, y, w, h = map(int, best_box)
+                x1, y1, x2, y2 = x, y, x + w, y + h
         else:
             print(f"Unexpected box format: {best_box}")
             return None, None
         
         # Ensure coordinates are within image bounds
         height, width = image_array.shape[:2]
-        x = max(0, min(x, width - 1))
-        y = max(0, min(y, height - 1))
-        w = max(1, min(w, width - x))
-        h = max(1, min(h, height - y))
+        x1 = max(0, min(x1, width - 1))
+        y1 = max(0, min(y1, height - 1))
+        x2 = max(x1 + 1, min(x2, width))
+        y2 = max(y1 + 1, min(y2, height))
         
-        # Crop the test tube region
-        test_tube_region = image_array[y:y+h, x:x+w]
-        bbox = [x, y, w, h]
+        # Crop the test tube region using the corrected coordinates
+        test_tube_region = image_array[y1:y2, x1:x2]
+
+        # Return bbox in [x, y, w, h] format
+        bbox = [x1, y1, x2 - x1, y2 - y1]
         
         return test_tube_region, bbox
     
