@@ -637,7 +637,7 @@ class NitriteTestAnalyzer:
         
         return combined_color.astype(int), avg_confidence
 
-    def extract_liquid_color_with_validation(self,test_tube_region, methods=['kmeans'], k=3):
+    def extract_liquid_color_with_validation(self,test_tube_region, methods=['kmeans'], k=5):
         """
         Extract liquid color with validation across multiple methods
         
